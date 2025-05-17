@@ -132,6 +132,13 @@ void executeCommand(char cmd) {
   }
 }
 
+// 将机械臂移动到原点位置
+void moveToHome() {
+  Serial.println("正在返回原点位置...");
+  moveToPosition(0, 0);
+  Serial.println("已返回原点");
+}
+
 // 更新棋盘状态（读取所有霍尔传感器）
 void updateBoardState() {
   int newState[9] = {0};
@@ -332,7 +339,8 @@ void placeBlackToCenter() {
   pickBlackPiece();
   moveToGrid(4); // 5号方格(索引从0开始，所以是4)
   placePiece();
-
+  
+  moveToHome(); // 返回原点
   Serial.println("任务1完成");
 }
 
@@ -371,7 +379,8 @@ void placeTwoBlackTwoWhite() {
     Serial.println(positions[i] + 1);
     delay(1000);
   }
-
+  
+  moveToHome(); // 返回原点
   Serial.println("任务2完成");
 }
 
@@ -414,6 +423,11 @@ void startGameAsMachine() {
     Serial.print("机器黑棋落在位置: ");
     Serial.println(machineMove + 1);
     printBoard();
+
+    // 更新参考状态
+    for (int i = 0; i < 9; i++) {
+      storedBoardState[i] = boardState[i];
+    }
     
     // 检查游戏是否结束
     if (checkWin(1)) {
@@ -434,6 +448,11 @@ void startGameAsMachine() {
     
     Serial.print("检测到人类白棋落在位置: ");
     Serial.println(humanMove + 1);
+
+    // 更新参考状态
+    for (int i = 0; i < 9; i++) {
+      storedBoardState[i] = boardState[i];
+    }
     
     // 检查游戏是否结束
     if (checkWin(2)) {
@@ -449,6 +468,7 @@ void startGameAsMachine() {
     }
   }
   
+  moveToHome(); // 返回原点
   Serial.println("游戏结束，输入'r'可重置游戏");
 }
 
@@ -466,6 +486,11 @@ void startGameAsHuman() {
     int humanMove = waitForHumanMove(1);
     if (humanMove == -1)
       continue;
+
+    // 更新参考状态
+    for (int i = 0; i < 9; i++) {
+      storedBoardState[i] = boardState[i];
+    }
 
     Serial.print("检测到人类黑棋落在位置: ");
     Serial.println(humanMove + 1);
@@ -494,6 +519,11 @@ void startGameAsHuman() {
     placePiece();
     boardState[machineMove] = 2;
 
+    // 更新参考状态
+    for (int i = 0; i < 9; i++) {
+      storedBoardState[i] = boardState[i];
+    }
+
     Serial.print("机器白棋落在位置: ");
     Serial.println(machineMove + 1);
     printBoard();
@@ -511,6 +541,9 @@ void startGameAsHuman() {
       break;
     }
   }
+  
+  moveToHome(); // 返回原点
+  Serial.println("游戏结束，输入'r'可重置游戏");
 }
 
 // 等待人类下棋
@@ -552,6 +585,8 @@ void resetGame() {
   currentPlayer = 1;
   gameActive = false;
   moveDetectionFirstRun = true;
+  
+  moveToHome(); // 返回原点
   Serial.println("游戏已重置");
 }
 
