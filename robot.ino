@@ -22,8 +22,8 @@ const int MAGNET_PIN2 = 9;
 // 物理参数设置
 const int GRID_SIZE = 30; // 棋盘格尺寸(mm)
 const int LINE_WIDTH = 2; // 棋盘线宽(mm)
-const int STEPS_PER_MM = 80; // 步进电机每毫米的步数
-const int MOTOR_SPEED = 1000; // 电机速度(微秒/步)
+const int STEPS_PER_MM = 100; // 步进电机每毫米的步数
+const int MOTOR_SPEED = 500; // 电机速度(微秒/步)
 
 // 棋子放置区位置(相对于原点的偏移量，单位mm)
 const int BLACK_PIECES_X = -(3 * GRID_SIZE + LINE_WIDTH); // 棋盘左外侧
@@ -51,8 +51,11 @@ int whitePiecesCount = 5;
 int storedBoardState[9] = {0};
 bool moveDetectionFirstRun = true;
 
+// 添加全局变量跟踪当前吸附的棋子类型
+int currentMagnetState = 0;  // 0: 无棋子, 1: 黑棋(南极), 2: 白棋(北极)
+
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   Serial.println("井字棋机器人初始化中...");
 
   // 初始化霍尔传感器引脚
@@ -223,7 +226,7 @@ void moveToGrid(int gridNum) {
   moveToPosition(targetX, targetY);
 }
 
-// 控制步进电机移动到绝对位置(单位:mm)
+// 控制步进电机移动到绝对位置(单位:mm) - 适用于TB6600共阳极接法
 void moveToPosition(int x, int y) {
   static int currentX = 0;
   static int currentY = 0;
@@ -232,42 +235,58 @@ void moveToPosition(int x, int y) {
   int stepsX = (x - currentX) * STEPS_PER_MM;
   int stepsY = (y - currentY) * STEPS_PER_MM;
 
-  // 设置X轴方向
-  if (stepsX > 0) {
-    digitalWrite(X_DIR_PIN, HIGH);
-  } else {
-    digitalWrite(X_DIR_PIN, LOW);
-    stepsX = -stepsX;
+  // X轴移动
+  if (stepsX != 0) {
+    pinMode(X_STEP_PIN, OUTPUT);
+    pinMode(X_DIR_PIN, OUTPUT);
+    pinMode(X_ENABLE_PIN, OUTPUT);
+    
+    // 设置X轴方向
+    digitalWrite(X_DIR_PIN, (stepsX > 0) ? HIGH : LOW);
+
+    // 使能X轴电机
+    digitalWrite(X_ENABLE_PIN, HIGH);
+    
+    // 移动X轴（取绝对值）
+    stepsX = abs(stepsX);
+    for (int i = 0; i < stepsX; i++) {
+      digitalWrite(X_STEP_PIN, HIGH); // 发出脉冲(共阳极)
+      delayMicroseconds(MOTOR_SPEED);        // 脉冲宽度1ms
+      digitalWrite(X_STEP_PIN, LOW);  // 结束脉冲
+      delayMicroseconds(MOTOR_SPEED);        // 脉冲间隔1ms
+    }
   }
 
-  // 设置Y轴方向
-  if (stepsY > 0) {
-    digitalWrite(Y_DIR_PIN, HIGH);
-  } else {
-    digitalWrite(Y_DIR_PIN, LOW);
-    stepsY = -stepsY;
+  // Y轴移动
+  if (stepsY != 0) {
+    pinMode(Y_STEP_PIN, OUTPUT);
+    pinMode(Y_DIR_PIN, OUTPUT);
+    pinMode(Y_ENABLE_PIN, OUTPUT);
+    
+    // 设置Y轴方向
+    digitalWrite(Y_DIR_PIN, (stepsY > 0) ? HIGH : LOW);
+    
+    // 使能Y轴电机
+    digitalWrite(Y_ENABLE_PIN, HIGH);
+    
+    // 移动Y轴（取绝对值）
+    stepsY = abs(stepsY);
+    for (int i = 0; i < stepsY; i++) {
+      digitalWrite(Y_STEP_PIN, HIGH); // 发出脉冲(共阳极)
+      delayMicroseconds(MOTOR_SPEED);        // 脉冲宽度1ms
+      digitalWrite(Y_STEP_PIN, LOW);  // 结束脉冲
+      delayMicroseconds(MOTOR_SPEED);        // 脉冲间隔1ms
+    }
   }
-
-  // 移动X轴
-  for (int i = 0; i < stepsX; i++) {
-    digitalWrite(X_STEP_PIN, HIGH);
-    delayMicroseconds(MOTOR_SPEED);
-    digitalWrite(X_STEP_PIN, LOW);
-    delayMicroseconds(MOTOR_SPEED);
-  }
-
-  // 移动Y轴
-  for (int i = 0; i < stepsY; i++) {
-    digitalWrite(Y_STEP_PIN, HIGH);
-    delayMicroseconds(MOTOR_SPEED);
-    digitalWrite(Y_STEP_PIN, LOW);
-    delayMicroseconds(MOTOR_SPEED);
-  }
+  
+  // 移动完成后失能电机(可选，取决于是否需要保持扭矩)
+  // digitalWrite(X_ENABLE_PIN, LOW);
+  // digitalWrite(Y_ENABLE_PIN, LOW);
 
   // 更新当前位置
   currentX = x;
   currentY = y;
-
+  
   delay(200); // 稳定延时
 }
 
@@ -279,7 +298,7 @@ void pickBlackPiece() {
     return;
   }
 
-  int y = PIECES_Y_START + pieceIndex * (GRID_SIZE + PIECES_GAP);
+  int y = PIECES_Y_START + pieceIndex * (GRID_SIZE + PIECES_GAP);//这个需要改 棋子距离
   moveToPosition(BLACK_PIECES_X, y);
 
   // 启动电磁铁吸取黑棋(南极)
@@ -318,18 +337,36 @@ void placePiece() {
 void enableMagnetForBlack() {
   digitalWrite(MAGNET_PIN1, HIGH);
   digitalWrite(MAGNET_PIN2, LOW);
+  currentMagnetState = 1;  // 记录当前状态为吸取黑棋
 }
 
 // 启用电磁铁吸取白棋(北极)
 void enableMagnetForWhite() {
   digitalWrite(MAGNET_PIN1, LOW);
   digitalWrite(MAGNET_PIN2, HIGH);
+  currentMagnetState = 2;  // 记录当前状态为吸取白棋
 }
 
-// 停用电磁铁
+// 停用电磁铁并释放棋子(添加反向通电)
 void disableMagnet() {
+  // 根据当前吸附的棋子类型进行短暂反向通电
+  if (currentMagnetState == 1) {  // 当前吸附的是黑棋(南极)
+    // 反向通电消除剩余磁性
+    digitalWrite(MAGNET_PIN1, LOW);
+    digitalWrite(MAGNET_PIN2, HIGH);
+    delay(100);  // 短暂反向通电
+  }
+  else if (currentMagnetState == 2) {  // 当前吸附的是白棋(北极)
+    // 反向通电消除剩余磁性
+    digitalWrite(MAGNET_PIN1, HIGH);
+    digitalWrite(MAGNET_PIN2, LOW);
+    delay(100);  // 短暂反向通电
+  }
+  
+  // 完全停用电磁铁
   digitalWrite(MAGNET_PIN1, LOW);
   digitalWrite(MAGNET_PIN2, LOW);
+  currentMagnetState = 0;  // 重置状态
 }
 
 // 任务1: 将黑棋放到中心位置(5号方格)
