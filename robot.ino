@@ -28,8 +28,8 @@ const int MOTOR_SPEED = 500; // 电机速度(微秒/步)
 // 棋子放置区位置(相对于原点的偏移量，单位mm)
 const int BLACK_PIECES_X = -(3 * GRID_SIZE + LINE_WIDTH); // 棋盘左外侧
 const int WHITE_PIECES_X = 3 * GRID_SIZE + LINE_WIDTH;    // 棋盘右外侧
-const int PIECES_Y_START = -30;                           // 棋子放置区起始Y坐标
-const int PIECES_GAP = 10;                                // 棋子之间的间隔
+const int PIECES_Y_START =-60;                           // 棋子放置区起始Y坐标
+const int PIECES_GAP = 0;                                // 棋子之间的间隔
 
 // 棋盘坐标，以中心点为原点
 const int gridPositionsX[3] = {-GRID_SIZE, 0, GRID_SIZE};
@@ -60,8 +60,8 @@ void setup() {
 
   // 初始化霍尔传感器引脚
   for (int i = 0; i < 9; i++) {
-    pinMode(hallSensorS[i], INPUT);
-    pinMode(hallSensorN[i], INPUT);
+    pinMode(hallSensorS[i], INPUT_PULLUP);
+    pinMode(hallSensorN[i], INPUT_PULLUP);
   }
   pinMode(rotationSensor, INPUT);
 
@@ -125,6 +125,7 @@ void executeCommand(char cmd) {
     break;
   case '6': // 任务6：手动更新棋盘状态
     manualUpdateBoardState();
+    printBoard();
     break;
   case 'r': // 重置游戏
     resetGame();
@@ -147,12 +148,12 @@ void updateBoardState() {
   int newState[9] = {0};
 
   for (int i = 0; i < 9; i++) {
-    if (digitalRead(hallSensorS[i]) == HIGH) {
-      newState[i] = 1; // 检测到黑棋(南极)
-    } else if (digitalRead(hallSensorN[i]) == HIGH) {
-      newState[i] = 2; // 检测到白棋(北极)
+    if (digitalRead(hallSensorS[i]) == LOW) {
+      newState[i] = 1; // 检测到黑棋(南极) - 低电平有效
+    } else if (digitalRead(hallSensorN[i]) == LOW) {
+      newState[i] = 2; // 检测到白棋(北极) - 低电平有效
     } else {
-      newState[i] = 0; // 没有棋子
+      newState[i] = 0; // 没有棋子 - 两个引脚都是高电平
     }
   }
 
@@ -335,15 +336,15 @@ void placePiece() {
 
 // 启用电磁铁吸取黑棋(南极)
 void enableMagnetForBlack() {
-  digitalWrite(MAGNET_PIN1, HIGH);
-  digitalWrite(MAGNET_PIN2, LOW);
+  digitalWrite(MAGNET_PIN1, LOW);
+  digitalWrite(MAGNET_PIN2, HIGH);
   currentMagnetState = 1;  // 记录当前状态为吸取黑棋
 }
 
 // 启用电磁铁吸取白棋(北极)
 void enableMagnetForWhite() {
-  digitalWrite(MAGNET_PIN1, LOW);
-  digitalWrite(MAGNET_PIN2, HIGH);
+  digitalWrite(MAGNET_PIN1, HIGH);
+  digitalWrite(MAGNET_PIN2, LOW);
   currentMagnetState = 2;  // 记录当前状态为吸取白棋
 }
 
@@ -354,15 +355,15 @@ void disableMagnet() {
     // 反向通电消除剩余磁性
     digitalWrite(MAGNET_PIN1, LOW);
     digitalWrite(MAGNET_PIN2, HIGH);
-    delay(100);  // 短暂反向通电
+    delay(1000);  // 短暂反向通电
   }
   else if (currentMagnetState == 2) {  // 当前吸附的是白棋(北极)
     // 反向通电消除剩余磁性
     digitalWrite(MAGNET_PIN1, HIGH);
     digitalWrite(MAGNET_PIN2, LOW);
-    delay(100);  // 短暂反向通电
+    delay(1000);  // 短暂反向通电
   }
-  
+
   // 完全停用电磁铁
   digitalWrite(MAGNET_PIN1, LOW);
   digitalWrite(MAGNET_PIN2, LOW);
@@ -441,6 +442,7 @@ void startGameAsMachine() {
   resetGame();
   currentPlayer = 1; // 机器执黑
   gameActive = true;
+  moveDetectionFirstRun = true; // 重置棋子移动检测状态
   
   Serial.println("游戏开始，机器执黑先行");
   printBoard();
@@ -452,6 +454,13 @@ void startGameAsMachine() {
     
     int machineMove = findBestMove(1);
     
+    // 检查是否还有有效移动
+    if (machineMove == -1) {
+      Serial.println("没有可用的移动，游戏结束！");
+      gameActive = false;
+      break;
+    }
+    
     pickBlackPiece();
     moveToGrid(machineMove);
     placePiece();
@@ -461,7 +470,7 @@ void startGameAsMachine() {
     Serial.println(machineMove + 1);
     printBoard();
 
-    // 更新参考状态
+    // 立即更新参考状态，避免被checkForMovedPieces检测为移动
     for (int i = 0; i < 9; i++) {
       storedBoardState[i] = boardState[i];
     }
@@ -483,10 +492,18 @@ void startGameAsMachine() {
     Serial.println("请放置您的白棋...");
     int humanMove = waitForHumanMove(2);
     
+    // 检查是否需要中止游戏
+    if (humanMove == -1) {
+      Serial.println("游戏被中止");
+      gameActive = false;
+      break;
+    }
+    
     Serial.print("检测到人类白棋落在位置: ");
     Serial.println(humanMove + 1);
+    printBoard();
 
-    // 更新参考状态
+    // 立即更新参考状态
     for (int i = 0; i < 9; i++) {
       storedBoardState[i] = boardState[i];
     }
@@ -515,22 +532,30 @@ void startGameAsHuman() {
   resetGame();
   currentPlayer = 1; // 人类执黑
   gameActive = true;
+  moveDetectionFirstRun = true; // 重置棋子移动检测状态
 
-  Serial.println("请放置您的黑棋...");
+  Serial.println("游戏开始，请放置您的黑棋...");
+  printBoard();
 
   while (gameActive) {
     // 等待人类放置黑棋
     int humanMove = waitForHumanMove(1);
-    if (humanMove == -1)
-      continue;
-
-    // 更新参考状态
-    for (int i = 0; i < 9; i++) {
-      storedBoardState[i] = boardState[i];
+    
+    // 检查是否需要中止游戏
+    if (humanMove == -1) {
+      Serial.println("游戏被中止");
+      gameActive = false;
+      break;
     }
 
     Serial.print("检测到人类黑棋落在位置: ");
     Serial.println(humanMove + 1);
+    printBoard();
+
+    // 立即更新参考状态
+    for (int i = 0; i < 9; i++) {
+      storedBoardState[i] = boardState[i];
+    }
 
     // 检查游戏是否结束
     if (checkWin(1)) {
@@ -550,20 +575,27 @@ void startGameAsHuman() {
     delay(1000); // 模拟思考
 
     int machineMove = findBestMove(2);
+    
+    // 检查是否还有有效移动
+    if (machineMove == -1) {
+      Serial.println("没有可用的移动，游戏结束！");
+      gameActive = false;
+      break;
+    }
 
     pickWhitePiece();
     moveToGrid(machineMove);
     placePiece();
     boardState[machineMove] = 2;
 
-    // 更新参考状态
-    for (int i = 0; i < 9; i++) {
-      storedBoardState[i] = boardState[i];
-    }
-
     Serial.print("机器白棋落在位置: ");
     Serial.println(machineMove + 1);
     printBoard();
+
+    // 立即更新参考状态
+    for (int i = 0; i < 9; i++) {
+      storedBoardState[i] = boardState[i];
+    }
 
     // 检查游戏是否结束
     if (checkWin(2)) {
@@ -583,19 +615,42 @@ void startGameAsHuman() {
   Serial.println("游戏结束，输入'r'可重置游戏");
 }
 
-// 等待人类下棋
+// 等待人类下棋（增加超时机制）
 int waitForHumanMove(int playerValue) {
   int previousState[9];
   for (int i = 0; i < 9; i++) {
     previousState[i] = boardState[i];
   }
-
+  
+  unsigned long startTime = millis();
+  const unsigned long timeout = 60000; // 60秒超时
+  
   while (true) {
+    // 检查超时
+    if (millis() - startTime > timeout) {
+      Serial.println("等待超时，请尽快落子...");
+      startTime = millis(); // 重置计时器继续等待
+    }
+    
+    // 检查是否有中止命令
+    if (Serial.available() > 0) {
+      char cmd = Serial.peek(); // 查看但不移除
+      if (cmd == 'r') {
+        Serial.read(); // 移除字符
+        return -1; // 返回特殊值表示中止
+      }
+    }
+    
     delay(300);
     updateBoardState();
 
     for (int i = 0; i < 9; i++) {
       if (boardState[i] == playerValue && previousState[i] != playerValue) {
+        // 检查这个位置是否为空位
+        if (previousState[i] != 0) {
+          Serial.println("请在空位落子！");
+          return -1; // 返回错误
+        }
         return i;
       }
     }
@@ -616,6 +671,7 @@ void manualUpdateBoardState() {
 void resetGame() {
   for (int i = 0; i < 9; i++) {
     boardState[i] = 0;
+    storedBoardState[i] = 0; // 同时重置参考状态
   }
   blackPiecesCount = 5;
   whitePiecesCount = 5;
@@ -661,13 +717,14 @@ void printBoard() {
   }
 }
 
-// 检查玩家是否获胜（已修正，增加了棋子数量判断）
+// 检查玩家是否获胜（修正棋子数量判断逻辑）
 bool checkWin(int player) {
-  // 增加棋子数量判断
-  if (player == 1 && blackPiecesCount > 2)
-    return false;
-  if (player == 2 && whitePiecesCount > 2)
-    return false;
+  // 修正棋子数量判断 - 棋子用量需达到3个以上才可能获胜
+  // blackPiecesCount和whitePiecesCount表示剩余棋子
+  if (player == 1 && (5 - blackPiecesCount) < 3)
+    return false;  // 黑棋用量少于3个，不可能获胜
+  if (player == 2 && (5 - whitePiecesCount) < 3)
+    return false;  // 白棋用量少于3个，不可能获胜
 
   // 检查行
   for (int i = 0; i < 3; i++) {
